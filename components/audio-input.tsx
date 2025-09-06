@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AudioRecorder from "./audio-recorder";
 import AudioUpload from "./audio-upload";
 
@@ -10,6 +10,8 @@ interface TranscriptionResult {
   duration?: number;
   language?: string;
   segments?: any[];
+  audioUrl?: string; // URL for audio playback
+  audioFileName?: string; // Original filename for display
   metadata?: {
     processedAt: string;
     model: string;
@@ -45,6 +47,9 @@ export default function AudioInput({
         type: audioBlob.type,
       });
 
+      // Create audio URL for playback
+      const audioUrl = URL.createObjectURL(audioBlob);
+
       const formData = new FormData();
       formData.append("audio", audioFile);
 
@@ -59,8 +64,16 @@ export default function AudioInput({
       }
 
       const result: TranscriptionResult = await response.json();
-      setTranscriptionResult(result);
-      onTranscriptionComplete?.(result);
+
+      // Add audio URL and filename to result
+      const enhancedResult = {
+        ...result,
+        audioUrl,
+        audioFileName: audioFile.name,
+      };
+
+      setTranscriptionResult(enhancedResult);
+      onTranscriptionComplete?.(enhancedResult);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Transcription failed";
@@ -72,8 +85,21 @@ export default function AudioInput({
   };
 
   const handleNewRecording = () => {
+    // Clean up previous audio URL to prevent memory leaks
+    if (transcriptionResult?.audioUrl) {
+      URL.revokeObjectURL(transcriptionResult.audioUrl);
+    }
     setTranscriptionResult(null);
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (transcriptionResult?.audioUrl) {
+        URL.revokeObjectURL(transcriptionResult.audioUrl);
+      }
+    };
+  }, [transcriptionResult?.audioUrl]);
 
   const handleUploadTranscriptionComplete = (result: TranscriptionResult) => {
     setTranscriptionResult(result);
@@ -188,6 +214,45 @@ export default function AudioInput({
                 )}
               </div>
             </div>
+
+            {/* Audio Player */}
+            {transcriptionResult.audioUrl && (
+              <div className="mb-4 rounded-lg bg-white p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <svg
+                    className="h-4 w-4 text-gray-500"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                    />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">
+                    {transcriptionResult.audioFileName || "Audio Recording"}
+                  </span>
+                </div>
+                <audio
+                  controls
+                  preload="metadata"
+                  className="w-full"
+                  style={{ height: "40px" }}
+                >
+                  <source
+                    src={transcriptionResult.audioUrl}
+                    type="audio/webm"
+                  />
+                  <source src={transcriptionResult.audioUrl} type="audio/mp4" />
+                  <source src={transcriptionResult.audioUrl} type="audio/wav" />
+                  Your browser does not support audio playback.
+                </audio>
+              </div>
+            )}
+
             <div className="rounded-lg bg-white p-3">
               <p className="text-sm leading-relaxed text-gray-800">
                 {transcriptionResult.text}

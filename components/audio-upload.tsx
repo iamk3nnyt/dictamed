@@ -1,13 +1,15 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface TranscriptionResult {
   text: string;
   duration?: number;
   language?: string;
   segments?: any[];
+  audioUrl?: string; // URL for audio playback
+  audioFileName?: string; // Original filename for display
   metadata?: {
     processedAt: string;
     model: string;
@@ -50,6 +52,9 @@ export default function AudioUpload({
     setIsUploading(true);
 
     try {
+      // Create audio URL for playback
+      const audioUrl = URL.createObjectURL(file);
+
       const formData = new FormData();
       formData.append("audio", file);
 
@@ -64,8 +69,16 @@ export default function AudioUpload({
       }
 
       const result: TranscriptionResult = await response.json();
-      setTranscriptionResult(result);
-      onTranscriptionComplete?.(result);
+
+      // Add audio URL and filename to result
+      const enhancedResult = {
+        ...result,
+        audioUrl,
+        audioFileName: file.name,
+      };
+
+      setTranscriptionResult(enhancedResult);
+      onTranscriptionComplete?.(enhancedResult);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Transcription failed";
@@ -111,6 +124,10 @@ export default function AudioUpload({
 
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // Clean up audio URL to prevent memory leaks
+    if (transcriptionResult?.audioUrl) {
+      URL.revokeObjectURL(transcriptionResult.audioUrl);
+    }
     setSelectedFile(null);
     setTranscriptionResult(null);
     onFileSelect?.(null);
@@ -118,6 +135,15 @@ export default function AudioUpload({
       fileInputRef.current.value = "";
     }
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (transcriptionResult?.audioUrl) {
+        URL.revokeObjectURL(transcriptionResult.audioUrl);
+      }
+    };
+  }, [transcriptionResult?.audioUrl]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes";
