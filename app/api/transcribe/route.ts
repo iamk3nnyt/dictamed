@@ -42,7 +42,6 @@ export async function POST(request: NextRequest) {
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
       model: "whisper-1",
-      language: "en", // Can be made dynamic based on user preference
       response_format: "verbose_json",
       temperature: 0.2, // Lower temperature for more consistent medical transcription
     });
