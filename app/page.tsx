@@ -1,8 +1,11 @@
 "use client";
 
 import AudioUpload from "@/components/audio-upload";
+import { useState } from "react";
 
 export default function Home() {
+  const [error, setError] = useState<string | null>(null);
+
   return (
     <>
       <main className="flex min-h-screen flex-col justify-center py-8 sm:px-6 sm:py-12">
@@ -16,13 +19,43 @@ export default function Home() {
             compliance, and seamlessly integrates into your existing practice
             management systems.
           </p>
+
+          {error && (
+            <div className="mx-auto max-w-lg rounded-xl border border-red-200 bg-red-50 p-4">
+              <div className="flex items-center gap-2">
+                <svg
+                  className="h-5 w-5 text-red-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <p className="text-sm text-red-800">{error}</p>
+              </div>
+            </div>
+          )}
+
           <div className="mx-auto max-w-lg pt-4">
             <AudioUpload
               onFileSelect={(file) => {
+                setError(null);
                 if (file) {
                   console.log("Selected audio file:", file.name);
-                  // TODO: Implement audio processing with OpenAI
                 }
+              }}
+              onTranscriptionComplete={(result) => {
+                console.log("Transcription completed:", result);
+                setError(null);
+              }}
+              onTranscriptionError={(errorMessage) => {
+                console.error("Transcription error:", errorMessage);
+                setError(errorMessage);
               }}
             />
           </div>

@@ -3,23 +3,77 @@
 import { cn } from "@/lib/utils";
 import { useRef, useState } from "react";
 
+interface TranscriptionResult {
+  text: string;
+  duration?: number;
+  language?: string;
+  segments?: any[];
+  metadata?: {
+    processedAt: string;
+    model: string;
+    medicalContext: boolean;
+    confidence: string;
+  };
+}
+
 interface AudioUploadProps {
   onFileSelect?: (file: File | null) => void;
+  onTranscriptionComplete?: (result: TranscriptionResult) => void;
+  onTranscriptionError?: (error: string) => void;
   className?: string;
 }
 
 export default function AudioUpload({
   onFileSelect,
+  onTranscriptionComplete,
+  onTranscriptionError,
   className,
 }: AudioUploadProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [transcriptionResult, setTranscriptionResult] =
+    useState<TranscriptionResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = (file: File | null) => {
+  const handleFileSelect = async (file: File | null) => {
     setSelectedFile(file);
+    setTranscriptionResult(null);
     onFileSelect?.(file);
+
+    if (file) {
+      await transcribeAudio(file);
+    }
+  };
+
+  const transcribeAudio = async (file: File) => {
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("audio", file);
+
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Transcription failed");
+      }
+
+      const result: TranscriptionResult = await response.json();
+      setTranscriptionResult(result);
+      onTranscriptionComplete?.(result);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Transcription failed";
+      onTranscriptionError?.(errorMessage);
+      console.error("Transcription error:", error);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -57,7 +111,9 @@ export default function AudioUpload({
 
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
-    handleFileSelect(null);
+    setSelectedFile(null);
+    setTranscriptionResult(null);
+    onFileSelect?.(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -174,12 +230,46 @@ export default function AudioUpload({
             <div className="flex items-center gap-3">
               <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-300 border-t-gray-900"></div>
               <span className="text-sm font-medium text-gray-900">
-                Processing...
+                Transcribing audio...
               </span>
             </div>
           </div>
         )}
       </div>
+
+      {/* Transcription Result */}
+      {transcriptionResult && (
+        <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="text-sm font-medium text-gray-900">Transcription</h4>
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              {transcriptionResult.duration && (
+                <span>{Math.round(transcriptionResult.duration)}s</span>
+              )}
+              {transcriptionResult.language && (
+                <span className="rounded-full bg-gray-200 px-2 py-1">
+                  {transcriptionResult.language.toUpperCase()}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="rounded-lg bg-white p-3">
+            <p className="text-sm leading-relaxed text-gray-800">
+              {transcriptionResult.text}
+            </p>
+          </div>
+          {transcriptionResult.metadata && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+              <span className="flex items-center gap-1">
+                <div className="h-2 w-2 rounded-full bg-green-400"></div>
+                Medical Context Enabled
+              </span>
+              <span>•</span>
+              <span>Confidence: {transcriptionResult.metadata.confidence}</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
