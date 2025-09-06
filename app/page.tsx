@@ -1,6 +1,6 @@
 "use client";
 
-import AudioUpload from "@/components/audio-upload";
+import AudioInput from "@/components/audio-input";
 import { useState } from "react";
 
 export default function Home() {
@@ -42,13 +42,7 @@ export default function Home() {
           )}
 
           <div className="mx-auto max-w-lg pt-4">
-            <AudioUpload
-              onFileSelect={(file) => {
-                setError(null);
-                if (file) {
-                  console.log("Selected audio file:", file.name);
-                }
-              }}
+            <AudioInput
               onTranscriptionComplete={(result) => {
                 console.log("Transcription completed:", result);
                 setError(null);
