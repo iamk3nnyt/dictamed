@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
       model: "whisper-1",
       response_format: "verbose_json",
       temperature: 0.2, // Lower temperature for more consistent medical transcription
+      timestamp_granularities: ["word"],
     });
 
     // Enhanced response with medical context
@@ -58,7 +59,10 @@ export async function POST(request: NextRequest) {
         model: "whisper-1",
         medicalContext: true,
         confidence: "high", // Could be calculated from segments
+        hasWordTimestamps:
+          transcription.words && transcription.words.length > 0 ? true : false, // Check if word timestamps are available
       },
+      words: transcription.words,
     };
 
     return NextResponse.json(response);

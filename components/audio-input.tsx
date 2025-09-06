@@ -1,15 +1,35 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import AudioRecorder from "./audio-recorder";
 import AudioUpload from "./audio-upload";
+
+interface WordTimestamp {
+  word: string;
+  start: number;
+  end: number;
+}
+
+interface TranscriptionSegment {
+  id: number;
+  seek: number;
+  start: number;
+  end: number;
+  text: string;
+  tokens: number[];
+  temperature: number;
+  avg_logprob: number;
+  compression_ratio: number;
+  no_speech_prob: number;
+}
 
 interface TranscriptionResult {
   text: string;
   duration?: number;
   language?: string;
-  segments?: any[];
+  segments?: TranscriptionSegment[];
+  words?: WordTimestamp[]; // Word-level timestamps at top level
   audioUrl?: string; // URL for audio playback
   audioFileName?: string; // Original filename for display
   metadata?: {
@@ -17,6 +37,7 @@ interface TranscriptionResult {
     model: string;
     medicalContext: boolean;
     confidence: string;
+    hasWordTimestamps?: boolean;
   };
 }
 
@@ -37,6 +58,11 @@ export default function AudioInput({
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] =
     useState<TranscriptionResult | null>(null);
+  const [currentWordIndex, setCurrentWordIndex] = useState<{
+    wordIndex: number;
+  } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   const handleRecordingComplete = async (audioBlob: Blob) => {
     setIsTranscribing(true);
@@ -84,12 +110,66 @@ export default function AudioInput({
     }
   };
 
+  // Find current word based on audio time
+  const findCurrentWord = (currentTime: number) => {
+    if (!transcriptionResult?.words) return null;
+
+    for (
+      let wordIndex = 0;
+      wordIndex < transcriptionResult.words.length;
+      wordIndex++
+    ) {
+      const word = transcriptionResult.words[wordIndex];
+      if (currentTime >= word.start && currentTime <= word.end) {
+        return { wordIndex };
+      }
+    }
+    return null;
+  };
+
+  // Handle audio time updates for word highlighting
+  const handleTimeUpdate = () => {
+    if (!audioRef.current) return;
+
+    const currentTime = audioRef.current.currentTime;
+
+    // Update word highlighting if word timestamps are available
+    if (transcriptionResult?.words) {
+      const currentWord = findCurrentWord(currentTime);
+      setCurrentWordIndex(currentWord);
+
+      // Auto-scroll to current word
+      if (currentWord) {
+        const wordElement = document.querySelector(
+          `[data-word="${currentWord.wordIndex}"]`
+        );
+        if (wordElement) {
+          wordElement.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+            inline: "nearest",
+          });
+        }
+      }
+    }
+  };
+
+  // Handle play/pause state
+  const handlePlay = () => setIsPlaying(true);
+  const handlePause = () => setIsPlaying(false);
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentWordIndex(null);
+  };
+
   const handleNewRecording = () => {
     // Clean up previous audio URL to prevent memory leaks
     if (transcriptionResult?.audioUrl) {
       URL.revokeObjectURL(transcriptionResult.audioUrl);
     }
     setTranscriptionResult(null);
+    setCurrentWordIndex(null);
+    setIsPlaying(false);
   };
 
   // Cleanup on unmount
@@ -237,10 +317,15 @@ export default function AudioInput({
                   </span>
                 </div>
                 <audio
+                  ref={audioRef}
                   controls
                   preload="metadata"
                   className="w-full"
                   style={{ height: "40px" }}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={handlePlay}
+                  onPause={handlePause}
+                  onEnded={handleEnded}
                 >
                   <source
                     src={transcriptionResult.audioUrl}
@@ -253,10 +338,102 @@ export default function AudioInput({
               </div>
             )}
 
-            <div className="rounded-lg bg-white p-3">
-              <p className="text-sm leading-relaxed text-gray-800">
-                {transcriptionResult.text}
-              </p>
+            <div className="rounded-lg bg-white p-3 overflow-hidden">
+              {/* Check if we have word-level timestamps */}
+              {transcriptionResult.words ? (
+                <div className="text-sm leading-relaxed text-gray-800 break-words whitespace-normal">
+                  {/* Word-level interactive transcript */}
+                  {transcriptionResult.words.map((word, wordIndex) => {
+                    const isCurrentWord =
+                      currentWordIndex?.wordIndex === wordIndex;
+
+                    return (
+                      <>
+                        <span
+                          key={wordIndex}
+                          data-word={`${wordIndex}`}
+                          className={cn(
+                            "cursor-pointer px-0.5 transition-all duration-200",
+                            isCurrentWord && isPlaying
+                              ? "underline font-bold"
+                              : "hover:bg-blue-50 rounded"
+                          )}
+                          onClick={() => {
+                            // Jump to word timestamp
+                            if (audioRef.current) {
+                              audioRef.current.currentTime = word.start;
+                              audioRef.current.play();
+                            }
+                          }}
+                          title={`${word.start.toFixed(
+                            1
+                          )}s - ${word.end.toFixed(1)}s`}
+                        >
+                          {word.word}
+                        </span>
+                        {wordIndex <
+                          (transcriptionResult.words?.length || 0) - 1 && " "}
+                      </>
+                    );
+                  })}
+                  <div className="mt-2 text-xs text-green-600 flex items-center gap-1">
+                    <div className="h-2 w-2 rounded-full bg-green-400"></div>
+                    Word-level sync active - Current word appears bold and
+                    underlined
+                  </div>
+                </div>
+              ) : (
+                /* Fallback to segment-level or plain text */
+                <div className="text-sm leading-relaxed text-gray-800 break-words whitespace-normal">
+                  {transcriptionResult.segments ? (
+                    /* Segment-level interactive transcript */
+                    transcriptionResult.segments.map((segment, index) => {
+                      // Find if current time is within this segment
+                      const currentTime = audioRef.current?.currentTime || 0;
+                      const isCurrentSegment =
+                        isPlaying &&
+                        currentTime >= segment.start &&
+                        currentTime <= segment.end;
+
+                      return (
+                        <span
+                          key={index}
+                          className={cn(
+                            "cursor-pointer px-1 transition-all duration-200",
+                            isCurrentSegment
+                              ? "underline font-bold text-blue-600"
+                              : "hover:bg-blue-50 rounded"
+                          )}
+                          onClick={() => {
+                            if (audioRef.current) {
+                              audioRef.current.currentTime = segment.start;
+                              audioRef.current.play();
+                            }
+                          }}
+                          title={`${segment.start.toFixed(
+                            1
+                          )}s - ${segment.end.toFixed(1)}s`}
+                        >
+                          {segment.text}
+                          {index <
+                            (transcriptionResult.segments?.length || 0) - 1 &&
+                            " "}
+                        </span>
+                      );
+                    })
+                  ) : (
+                    /* Plain text fallback */
+                    <p>{transcriptionResult.text}</p>
+                  )}
+                  {transcriptionResult.segments && (
+                    <div className="mt-2 text-xs text-blue-600 flex items-center gap-1">
+                      <div className="h-2 w-2 rounded-full bg-blue-400"></div>
+                      Segment-level sync active - Current phrase appears bold
+                      and underlined
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             {transcriptionResult.metadata && (
               <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">

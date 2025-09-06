@@ -3,11 +3,31 @@
 import { cn } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 
+interface WordTimestamp {
+  word: string;
+  start: number;
+  end: number;
+}
+
+interface TranscriptionSegment {
+  id: number;
+  seek: number;
+  start: number;
+  end: number;
+  text: string;
+  tokens: number[];
+  temperature: number;
+  avg_logprob: number;
+  compression_ratio: number;
+  no_speech_prob: number;
+}
+
 interface TranscriptionResult {
   text: string;
   duration?: number;
   language?: string;
-  segments?: any[];
+  segments?: TranscriptionSegment[];
+  words?: WordTimestamp[]; // Word-level timestamps at top level
   audioUrl?: string; // URL for audio playback
   audioFileName?: string; // Original filename for display
   metadata?: {
@@ -15,6 +35,7 @@ interface TranscriptionResult {
     model: string;
     medicalContext: boolean;
     confidence: string;
+    hasWordTimestamps?: boolean;
   };
 }
 
@@ -36,7 +57,12 @@ export default function AudioUpload({
   const [isUploading, setIsUploading] = useState(false);
   const [transcriptionResult, setTranscriptionResult] =
     useState<TranscriptionResult | null>(null);
+  const [currentWordIndex, setCurrentWordIndex] = useState<{
+    wordIndex: number;
+  } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   const handleFileSelect = async (file: File | null) => {
     setSelectedFile(file);
@@ -122,6 +148,58 @@ export default function AudioUpload({
     fileInputRef.current?.click();
   };
 
+  // Find current word based on audio time
+  const findCurrentWord = (currentTime: number) => {
+    if (!transcriptionResult?.words) return null;
+
+    for (
+      let wordIndex = 0;
+      wordIndex < transcriptionResult.words.length;
+      wordIndex++
+    ) {
+      const word = transcriptionResult.words[wordIndex];
+      if (currentTime >= word.start && currentTime <= word.end) {
+        return { wordIndex };
+      }
+    }
+    return null;
+  };
+
+  // Handle audio time updates for word highlighting
+  const handleTimeUpdate = () => {
+    if (!audioRef.current) return;
+
+    const currentTime = audioRef.current.currentTime;
+
+    // Update word highlighting if word timestamps are available
+    if (transcriptionResult?.words) {
+      const currentWord = findCurrentWord(currentTime);
+      setCurrentWordIndex(currentWord);
+
+      // Auto-scroll to current word
+      if (currentWord) {
+        const wordElement = document.querySelector(
+          `[data-word="${currentWord.wordIndex}"]`
+        );
+        if (wordElement) {
+          wordElement.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+            inline: "nearest",
+          });
+        }
+      }
+    }
+  };
+
+  // Handle play/pause state
+  const handlePlay = () => setIsPlaying(true);
+  const handlePause = () => setIsPlaying(false);
+  const handleEnded = () => {
+    setIsPlaying(false);
+    setCurrentWordIndex(null);
+  };
+
   const handleRemove = (e: React.MouseEvent) => {
     e.stopPropagation();
     // Clean up audio URL to prevent memory leaks
@@ -130,6 +208,8 @@ export default function AudioUpload({
     }
     setSelectedFile(null);
     setTranscriptionResult(null);
+    setCurrentWordIndex(null);
+    setIsPlaying(false);
     onFileSelect?.(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -279,10 +359,139 @@ export default function AudioUpload({
               )}
             </div>
           </div>
-          <div className="rounded-lg bg-white p-3">
-            <p className="text-sm leading-relaxed text-gray-800">
-              {transcriptionResult.text}
-            </p>
+
+          {/* Audio Player */}
+          {transcriptionResult.audioUrl && (
+            <div className="mb-3 rounded-lg bg-white p-3 border border-gray-100">
+              <div className="flex items-center gap-3 mb-2">
+                <svg
+                  className="h-4 w-4 text-gray-600"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                  />
+                </svg>
+                <span className="text-sm font-medium text-gray-700">
+                  {transcriptionResult.audioFileName || "Audio Recording"}
+                </span>
+              </div>
+              <audio
+                ref={audioRef}
+                controls
+                preload="metadata"
+                className="w-full"
+                style={{ height: "40px" }}
+                onTimeUpdate={handleTimeUpdate}
+                onPlay={handlePlay}
+                onPause={handlePause}
+                onEnded={handleEnded}
+              >
+                <source src={transcriptionResult.audioUrl} type="audio/webm" />
+                <source src={transcriptionResult.audioUrl} type="audio/mp4" />
+                <source src={transcriptionResult.audioUrl} type="audio/wav" />
+                Your browser does not support audio playback.
+              </audio>
+            </div>
+          )}
+
+          <div className="rounded-lg bg-white p-3 overflow-hidden">
+            {/* Check if we have word-level timestamps */}
+            {transcriptionResult.words ? (
+              <div className="text-sm leading-relaxed text-gray-800 break-words whitespace-normal">
+                {/* Word-level interactive transcript */}
+                {transcriptionResult.words.map((word, wordIndex) => {
+                  const isCurrentWord =
+                    currentWordIndex?.wordIndex === wordIndex;
+
+                  return (
+                    <>
+                      <span
+                        key={wordIndex}
+                        data-word={`${wordIndex}`}
+                        className={cn(
+                          "cursor-pointer px-0.5 transition-all duration-200",
+                          isCurrentWord && isPlaying
+                            ? "underline font-bold"
+                            : "hover:bg-blue-50 rounded"
+                        )}
+                        onClick={() => {
+                          // Jump to word timestamp
+                          if (audioRef.current) {
+                            audioRef.current.currentTime = word.start;
+                            audioRef.current.play();
+                          }
+                        }}
+                        title={`${word.start.toFixed(1)}s - ${word.end.toFixed(
+                          1
+                        )}s`}
+                      >
+                        {word.word}
+                      </span>
+                      {wordIndex <
+                        (transcriptionResult.words?.length || 0) - 1 && " "}
+                    </>
+                  );
+                })}
+                <div className="mt-2 text-xs text-green-600 flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-green-400"></div>
+                  Word-level sync active - Current word appears bold and
+                  underlined
+                </div>
+              </div>
+            ) : transcriptionResult.segments ? (
+              <div className="text-sm leading-relaxed text-gray-800 break-words whitespace-normal">
+                {/* Segment-level interactive transcript */}
+                {transcriptionResult.segments.map((segment, index) => {
+                  // Find if current time is within this segment
+                  const currentTime = audioRef.current?.currentTime || 0;
+                  const isCurrentSegment =
+                    isPlaying &&
+                    currentTime >= segment.start &&
+                    currentTime <= segment.end;
+
+                  return (
+                    <span
+                      key={index}
+                      className={cn(
+                        "cursor-pointer px-1 transition-all duration-200",
+                        isCurrentSegment
+                          ? "underline font-bold"
+                          : "hover:bg-blue-50 rounded"
+                      )}
+                      onClick={() => {
+                        if (audioRef.current) {
+                          audioRef.current.currentTime = segment.start;
+                          audioRef.current.play();
+                        }
+                      }}
+                      title={`${segment.start.toFixed(
+                        1
+                      )}s - ${segment.end.toFixed(1)}s`}
+                    >
+                      {segment.text}
+                      {index <
+                        (transcriptionResult.segments?.length || 0) - 1 && " "}
+                    </span>
+                  );
+                })}
+                <div className="mt-2 text-xs text-blue-600 flex items-center gap-1">
+                  <div className="h-2 w-2 rounded-full bg-blue-400"></div>
+                  Segment-level sync active - Current phrase appears bold and
+                  underlined
+                </div>
+              </div>
+            ) : (
+              /* Plain text fallback */
+              <p className="text-sm leading-relaxed text-gray-800">
+                {transcriptionResult.text}
+              </p>
+            )}
           </div>
           {transcriptionResult.metadata && (
             <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
