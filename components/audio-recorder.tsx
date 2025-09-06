@@ -62,7 +62,16 @@ export default function AudioRecorder({
       const source = audioContextRef.current.createMediaStreamSource(stream);
       source.connect(analyserRef.current);
 
-      analyserRef.current.fftSize = 256;
+      // Configure analyser for better sensitivity
+      analyserRef.current.fftSize = 512; // Increased for better resolution
+      analyserRef.current.smoothingTimeConstant = 0.3; // Reduce smoothing for more responsive visualization
+      analyserRef.current.minDecibels = -90;
+      analyserRef.current.maxDecibels = -10;
+
+      // Ensure audio context is running
+      if (audioContextRef.current.state === "suspended") {
+        await audioContextRef.current.resume();
+      }
 
       return stream;
     } catch (error) {
@@ -73,7 +82,7 @@ export default function AudioRecorder({
     }
   }, [onRecordingError]);
 
-  // Audio level visualization
+  // Audio level visualization - removed dependencies to avoid stale closures
   const updateAudioLevel = useCallback(() => {
     if (!analyserRef.current) return;
 
@@ -88,14 +97,13 @@ export default function AudioRecorder({
     }
     const rms = Math.sqrt(sum / dataArray.length);
 
-    // Apply some smoothing and amplification for better visualization
-    const smoothedLevel = Math.min(1, rms * 5);
-    setAudioLevel(smoothedLevel);
+    // Apply amplification for better visualization
+    const amplifiedLevel = Math.min(1, rms * 8);
+    setAudioLevel(amplifiedLevel);
 
-    if (isRecording && !isPaused) {
-      animationRef.current = requestAnimationFrame(updateAudioLevel);
-    }
-  }, [isRecording, isPaused]);
+    // Continue animation loop - will be controlled by start/stop recording
+    animationRef.current = requestAnimationFrame(updateAudioLevel);
+  }, []);
 
   // Start recording
   const startRecording = useCallback(async () => {
@@ -134,9 +142,10 @@ export default function AudioRecorder({
         setRecordingTime((prev) => prev + 1);
       }, 1000);
 
-      // Start audio level animation
+      // Start audio level animation immediately
       updateAudioLevel();
     } catch (error) {
+      console.error("Recording start error:", error);
       onRecordingError?.("Failed to start recording. Please try again.");
     }
   }, [
@@ -152,6 +161,13 @@ export default function AudioRecorder({
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       setIsPaused(false);
+      // Stop animation loop
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      // Reset audio level
+      setAudioLevel(0);
     }
   }, [isRecording]);
 
@@ -166,8 +182,6 @@ export default function AudioRecorder({
       timerRef.current = setInterval(() => {
         setRecordingTime((prev) => prev + 1);
       }, 1000);
-      // Resume audio level animation
-      updateAudioLevel();
     } else {
       mediaRecorderRef.current.pause();
       setIsPaused(true);
@@ -176,13 +190,8 @@ export default function AudioRecorder({
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      // Stop audio level animation
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-        animationRef.current = null;
-      }
     }
-  }, [isRecording, isPaused, updateAudioLevel]);
+  }, [isRecording, isPaused]);
 
   // Cleanup function
   const cleanup = useCallback(() => {
@@ -275,16 +284,17 @@ export default function AudioRecorder({
           <div className="mb-6 flex items-center justify-center">
             <div className="flex items-center gap-1">
               {[...Array(20)].map((_, i) => {
-                const barHeight = Math.max(
-                  8,
-                  audioLevel * 60 + Math.random() * 10
-                );
+                // Use current audio level for active bars
                 const isActive = audioLevel * 20 > i;
+                const barHeight = isPaused
+                  ? 8
+                  : Math.max(8, 8 + audioLevel * 40);
+
                 return (
                   <div
                     key={i}
                     className={cn(
-                      "w-1 rounded-full transition-all duration-150",
+                      "w-1 rounded-full transition-all duration-100",
                       isActive
                         ? isPaused
                           ? "bg-yellow-500"
@@ -292,7 +302,7 @@ export default function AudioRecorder({
                         : "bg-gray-200"
                     )}
                     style={{
-                      height: `${isPaused ? 8 : barHeight}px`,
+                      height: `${barHeight}px`,
                     }}
                   />
                 );
